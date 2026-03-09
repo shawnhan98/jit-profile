@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { streamText } from "ai";
 import AnalysisInput from "@/components/AnalysisInput";
 import KnowledgeCheck from "@/components/KnowledgeCheck";
 import CustomizedExplanation from "@/components/CustomizedExplanation";
@@ -32,19 +33,18 @@ export default function HomePage() {
     });
 
     if (!response.ok) {
-      throw new Error("Failed to extract knowledge points");
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to extract knowledge points");
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No reader available");
+    // 使用 AI SDK 来解析流
+    const { textStream } = await streamText({
+      fetch: async () => response,
+    });
 
-    const decoder = new TextDecoder();
     let fullText = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      fullText += decoder.decode(value, { stream: true });
+    for await (const chunk of textStream) {
+      fullText += chunk;
     }
 
     try {
@@ -52,7 +52,8 @@ export default function HomePage() {
       return parsed.knowledge_points || [];
     } catch (e) {
       console.error("Failed to parse knowledge points:", e);
-      const match = fullText.match(/"knowledge_points"\s*:\s*(\[[^\]]*\])/);
+      // Try to extract JSON array directly
+      const match = fullText.match(/"knowledge_points"\s*:\s*(\[[^\]]*\])/s);
       if (match) {
         try {
           return JSON.parse(match[1]);
@@ -82,19 +83,18 @@ export default function HomePage() {
     });
 
     if (!response.ok) {
-      throw new Error("Failed to generate explanation");
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to generate explanation");
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No reader available");
+    // 使用 AI SDK 来解析流
+    const { textStream } = await streamText({
+      fetch: async () => response,
+    });
 
-    const decoder = new TextDecoder();
     let fullText = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
+    for await (const chunk of textStream) {
       fullText += chunk;
       setStreamingText((prev) => prev + chunk);
     }
