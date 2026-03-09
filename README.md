@@ -24,11 +24,10 @@ npm install
 cp .env.local.example .env.local
 ```
 
-2. 编辑 `.env.local` 文件，填入你的 OpenAI API Key：
+2. 编辑 `.env.local` 文件，填入你的智谱 AI API Key：
 
 ```env
-OPENAI_API_KEY=sk-your-api-key-here
-NEXT_PUBLIC_OPENAI_API_KEY=sk-your-api-key-here
+ZHIPU_API_KEY=your_zhipu_api_key_here
 ```
 
 ⚠️ **注意**：生产环境请使用 Vercel 环境变量或安全的密钥管理方式，不要提交 `.env.local` 到版本控制。
@@ -84,7 +83,7 @@ jit-profile/
 - **语言**: TypeScript
 - **样式**: Tailwind CSS
 - **AI SDK**: Vercel AI SDK v3
-- **AI 模型**: OpenAI GPT-4o-mini（可替换为其他兼容模型）
+- **AI 模型**: 智谱 AI GLM-4-Flash（OpenAI 兼容接口）
 
 ## 🎨 设计系统
 
@@ -101,8 +100,7 @@ jit-profile/
 1. 推送代码到 GitHub
 2. 在 Vercel 导入项目
 3. 添加环境变量：
-   - `OPENAI_API_KEY`
-   - `NEXT_PUBLIC_OPENAI_API_KEY`
+   - `ZHIPU_API_KEY`
 4. 部署完成
 
 ### 其他平台
@@ -116,13 +114,10 @@ jit-profile/
 
 ### 修改 AI 模型
 
-在 `app/page.tsx` 中的 `streamText` 调用里修改 `model`：
+需要在 `lib/zhipu.ts` 和 `app/api/chat/route.ts` 中修改 `model` 参数：
 
 ```typescript
-const result = streamText({
-  model: openai.chat("gpt-4o-mini"), // 改为 "gpt-4o" 或其他
-  // ...
-});
+model: zhipu.chat("glm-4-flash")  // 可改为 "glm-4-plus" 等智谱其他模型
 ```
 
 ### 添加新功能

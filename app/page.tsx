@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { streamText } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
 import AnalysisInput from "@/components/AnalysisInput";
 import KnowledgeCheck from "@/components/KnowledgeCheck";
 import CustomizedExplanation from "@/components/CustomizedExplanation";
@@ -22,35 +20,31 @@ export default function HomePage() {
   const [streamingText, setStreamingText] = useState("");
   const explanationRef = useRef<HTMLDivElement>(null);
 
-  const openai = createOpenAI({
-    apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-  });
-
-  const extractKnowledgePoints = async (content: string) => {
-    const result = await streamText({
-      model: openai.chat("gpt-4o-mini"),
-      prompt: `请分析以下内容，提取1-2个最重要的前置知识点或概念。内容：${content}`,
-      system: `你是一个专业的学习分析助手。请从用户提供的内容中，识别出理解该内容所必需的最关键的1-2个前置知识点或概念。
-
-输出格式要求（严格JSON）：
-{
-  "knowledge_points": [
-    {
-      "term": "知识点名称",
-      "definition": "简短清晰的定义，30字以内"
-    }
-  ]
-}
-
-要求：
-1. 选择真正前置、基础的概念
-2. 定义要简洁易懂
-3. 只返回JSON，不要其他文本`,
+  // 调用后端 API - 提取知识点
+  const extractKnowledgePoints = async (content: string): Promise<KnowledgePoint[]> => {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "extract",
+        content,
+      }),
     });
 
+    if (!response.ok) {
+      throw new Error("Failed to extract knowledge points");
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No reader available");
+
+    const decoder = new TextDecoder();
     let fullText = "";
-    for await (const chunk of result.textStream) {
-      fullText += chunk;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fullText += decoder.decode(value, { stream: true });
     }
 
     try {
@@ -58,12 +52,11 @@ export default function HomePage() {
       return parsed.knowledge_points || [];
     } catch (e) {
       console.error("Failed to parse knowledge points:", e);
-      // Fallback: try to extract any array
       const match = fullText.match(/"knowledge_points"\s*:\s*(\[[^\]]*\])/);
       if (match) {
         try {
           return JSON.parse(match[1]);
-        } catch (e2) {
+        } catch {
           return [];
         }
       }
@@ -71,34 +64,36 @@ export default function HomePage() {
     }
   };
 
+  // 调用后端 API - 生成解释
   const generateExplanation = async (
     content: string,
     knowledgePoints: KnowledgePoint[],
     selectedLevels: Record<number, KnowledgeLevel>
   ) => {
-    const levels = ["未知", "听过", "掌握", "跳过"];
-    const levelDescs = [
-      "完全陌生，需要最基础的解释，使用大量类比和实例",
-      "大概听过，需要温和的讲解，适当补充背景",
-      "了如指掌，可以直接进入核心内容，侧重深度和应用",
-      "跳过此知识点，直接分析主要内容",
-    ];
-
-    const prompt = knowledgePoints
-      .map((kp, idx) => {
-        const level = selectedLevels[idx] || "unknown";
-        const levelDesc = levelDescs[["unknown", "familiar", "mastered", "skip"].indexOf(level)];
-        return `知识点：${kp.term}（${kp.definition}）- 用户掌握程度：${levels[["unknown", "familiar", "mastered", "skip"].indexOf(level)]}，需要${levelDesc}`;
-      })
-      .join("\n");
-
-    const result = await streamText({
-      model: openai.chat("gpt-4o-mini"),
-      prompt: `请根据以下信息，为用户生成个性化的内容解析：\n\n原始内容：${content}\n\n知识点评估：\n${prompt}\n\n请生成一个完整的解析，包括：\n1. 简短的导入（如果需要）\n2. 针对每个知识点，根据用户掌握程度调整讲解深度和方式\n3. 对原始内容的分析和解读\n\n要求：\n- 语言亲切自然，像老师在对学生讲解\n- 对掌握程度低的知识点多用类比和实例\n- 对掌握程度高的直接深入\n- 跳过的知识点简单带过或不讲\n- 整体流畅易读，适当分段`,
-      system: `你是一个因材施教的教学专家。根据用户对不同前置知识的掌握程度，动态调整你的讲解风格和深度。目标是让每个用户都能以最适合自己的方式理解内容。`,
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "explain",
+        content,
+        knowledgePoints,
+        selectedLevels,
+      }),
     });
 
-    for await (const chunk of result.textStream) {
+    if (!response.ok) {
+      throw new Error("Failed to generate explanation");
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No reader available");
+
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
       setStreamingText((prev) => prev + chunk);
     }
   };
@@ -110,12 +105,18 @@ export default function HomePage() {
     setState((prev) => ({ ...prev, step: "check" }));
     setIsLoading(false);
 
-    const knowledgePoints = await extractKnowledgePoints(state.content);
-    setState((prev) => ({
-      ...prev,
-      knowledgePoints,
-      step: knowledgePoints.length > 0 ? "check" : "explanation",
-    }));
+    try {
+      const knowledgePoints = await extractKnowledgePoints(state.content);
+      setState((prev) => ({
+        ...prev,
+        knowledgePoints,
+        step: knowledgePoints.length > 0 ? "check" : "explanation",
+      }));
+    } catch (error) {
+      console.error("Extraction failed:", error);
+      alert("分析失败，请重试");
+      setState((prev) => ({ ...prev, step: "input" }));
+    }
   };
 
   const handleLevelSelect = async (index: number, level: KnowledgeLevel) => {
@@ -124,7 +125,6 @@ export default function HomePage() {
       selectedLevels: { ...prev.selectedLevels, [index]: level },
     }));
 
-    // If all checked or skip selected, proceed
     const updatedLevels = { ...state.selectedLevels, [index]: level };
     const hasAllSelected = state.knowledgePoints.every(
       (_, i) => updatedLevels[i] !== undefined
@@ -136,14 +136,24 @@ export default function HomePage() {
       setState((prev) => ({ ...prev, step: "explanation" }));
       setStreamingText("");
 
-      await generateExplanation(
-        state.content,
-        state.knowledgePoints,
-        updatedLevels
-      );
-
-      setIsLoading(false);
-      setState((prev) => ({ ...prev, explanation: streamingText, step: "complete" }));
+      try {
+        await generateExplanation(
+          state.content,
+          state.knowledgePoints,
+          updatedLevels
+        );
+        setIsLoading(false);
+        setState((prev) => ({
+          ...prev,
+          explanation: streamingText,
+          step: "complete",
+        }));
+      } catch (error) {
+        console.error("Generation failed:", error);
+        alert("生成解析失败，请重试");
+        setState((prev) => ({ ...prev, step: "check" }));
+        setIsLoading(false);
+      }
     }
   };
 
