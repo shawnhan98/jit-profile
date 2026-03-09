@@ -69,7 +69,7 @@ export default function HomePage() {
     content: string,
     knowledgePoints: KnowledgePoint[],
     selectedLevels: Record<number, KnowledgeLevel>
-  ) => {
+  ): Promise<string> => {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -89,13 +89,17 @@ export default function HomePage() {
     if (!reader) throw new Error("No reader available");
 
     const decoder = new TextDecoder();
+    let fullText = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = decoder.decode(value, { stream: true });
+      fullText += chunk;
       setStreamingText((prev) => prev + chunk);
     }
+
+    return fullText;
   };
 
   const handleStartAnalysis = async () => {
@@ -135,7 +139,7 @@ export default function HomePage() {
       setStreamingText("");
 
       try {
-        await generateExplanation(
+        const fullText = await generateExplanation(
           state.content,
           state.knowledgePoints,
           updatedLevels
@@ -143,7 +147,7 @@ export default function HomePage() {
         setIsLoading(false);
         setState((prev) => ({
           ...prev,
-          explanation: streamingText,
+          explanation: fullText,
           step: "complete",
         }));
       } catch (error) {
