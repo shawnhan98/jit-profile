@@ -102,9 +102,6 @@ export default function HomePage() {
     if (!state.content.trim()) return;
 
     setIsLoading(true);
-    setState((prev) => ({ ...prev, step: "check" }));
-    setIsLoading(false);
-
     try {
       const knowledgePoints = await extractKnowledgePoints(state.content);
       setState((prev) => ({
@@ -115,7 +112,8 @@ export default function HomePage() {
     } catch (error) {
       console.error("Extraction failed:", error);
       alert("分析失败，请重试");
-      setState((prev) => ({ ...prev, step: "input" }));
+    } finally {
+      setIsLoading(false);
     }
   };
 
