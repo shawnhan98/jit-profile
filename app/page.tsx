@@ -106,11 +106,21 @@ export default function HomePage() {
       return parsed.knowledge_points || [];
     } catch (e) {
       console.error("Failed to parse knowledge points:", e);
-      // 尝试直接提取 JSON 数组
-      const match = fullText.match(/"knowledge_points"\s*:\s*(\[[^\]]*\])/s);
+      // 尝试直接提取 JSON 数组（不使用 /s 标志）
+      const match = fullText.match(/"knowledge_points"\s*:\s*(\[[\s\S]*?\])/);
       if (match) {
         try {
           return JSON.parse(match[1]);
+        } catch {
+          return [];
+        }
+      }
+      // 尝试提取整个 JSON 对象（备用方案）
+      const objMatch = fullText.match(/\{[\s\S]*"knowledge_points"[\s\S]*\}/);
+      if (objMatch) {
+        try {
+          const parsed = JSON.parse(objMatch[0]);
+          return parsed.knowledge_points || [];
         } catch {
           return [];
         }
