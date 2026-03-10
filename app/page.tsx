@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { streamText } from "ai";
 import AnalysisInput from "@/components/AnalysisInput";
 import KnowledgeCheck from "@/components/KnowledgeCheck";
 import CustomizedExplanation from "@/components/CustomizedExplanation";
@@ -14,6 +13,69 @@ const DEFAULT_STATE: AnalysisState = {
   explanation: "",
   step: "input",
 };
+
+// 解析 SSE 流，提取文本内容
+async function readSSEText(response: Response): Promise<string> {
+  // 检查响应状态
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error");
+    throw new Error(`API request failed: ${response.status} - ${errorText}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  
+  // 如果不是流式响应，直接返回文本
+  if (!contentType.includes("text/event-stream")) {
+    return await response.text();
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No reader available");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    buffer += decoder.decode(value, { stream: true });
+    
+    // 处理 buffer 中的行
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || ""; // 保留不完整的行
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data: ")) continue;
+      
+      const data = trimmed.slice(6); // 去掉 "data: " 前缀
+      
+      if (data === "[DONE]") continue;
+      
+      try {
+        const parsed = JSON.parse(data);
+        // AI SDK 的 toAIStream 格式：{ type: "text-delta", textDelta: "..." }
+        if (parsed.type === "text-delta" && parsed.textDelta) {
+          fullText += parsed.textDelta;
+        } else if (parsed.choices?.[0]?.delta?.content) {
+          // 智谱 API 原生格式
+          fullText += parsed.choices[0].delta.content;
+        } else if (parsed.error) {
+          throw new Error(parsed.error.message || "API error");
+        }
+      } catch {
+        // 如果不是 JSON，可能是原始文本行（备用）
+        if (data) {
+          fullText += data;
+        }
+      }
+    }
+  }
+  
+  return fullText;
+}
 
 export default function HomePage() {
   const [state, setState] = useState<AnalysisState>(DEFAULT_STATE);
@@ -37,22 +99,14 @@ export default function HomePage() {
       throw new Error(err.error || "Failed to extract knowledge points");
     }
 
-    // 使用 AI SDK 来解析流
-    const { textStream } = await streamText({
-      fetch: async () => response,
-    });
-
-    let fullText = "";
-    for await (const chunk of textStream) {
-      fullText += chunk;
-    }
+    const fullText = await readSSEText(response);
 
     try {
       const parsed = JSON.parse(fullText);
       return parsed.knowledge_points || [];
     } catch (e) {
       console.error("Failed to parse knowledge points:", e);
-      // Try to extract JSON array directly
+      // 尝试直接提取 JSON 数组
       const match = fullText.match(/"knowledge_points"\s*:\s*(\[[^\]]*\])/s);
       if (match) {
         try {
@@ -87,16 +141,46 @@ export default function HomePage() {
       throw new Error(err.error || "Failed to generate explanation");
     }
 
-    // 使用 AI SDK 来解析流
-    const { textStream } = await streamText({
-      fetch: async () => response,
-    });
-
     let fullText = "";
 
-    for await (const chunk of textStream) {
-      fullText += chunk;
-      setStreamingText((prev) => prev + chunk);
+    // 流式读取并同时更新 UI
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No reader available");
+    
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      
+      // 处理 buffer 中的行
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        
+        const data = trimmed.slice(6);
+        
+        if (data === "[DONE]") continue;
+        
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.type === "text-delta" && parsed.textDelta) {
+            fullText += parsed.textDelta;
+            setStreamingText((prev) => prev + parsed.textDelta);
+          }
+        } catch {
+          if (data) {
+            fullText += data;
+            setStreamingText((prev) => prev + data);
+          }
+        }
+      }
     }
 
     return fullText;
