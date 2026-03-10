@@ -15,6 +15,8 @@ export async function POST(request: NextRequest) {
         model: zhipu.chat("glm-4.7-flash"),
         temperature: 0.3,
         maxTokens: 500,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(15000),
         prompt: `请分析以下内容，提取1-2个最重要的前置知识点或概念。内容：${content}`,
         system: `你是一个专业的学习分析助手。请从用户提供的内容中，识别出理解该内容所必需的最关键的1-2个前置知识点或概念。
 
@@ -59,6 +61,8 @@ export async function POST(request: NextRequest) {
         model: zhipu.chat("glm-4.7-flash"),
         temperature: 0.5,
         maxTokens: 1500,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(20000),
         prompt: `请根据以下信息，为用户生成个性化的内容解析：
 
 原始内容：${content}
@@ -91,10 +95,21 @@ ${prompt}
     console.error("API error:", error);
 
     // 检查是否是智谱速率限制错误
-    if (error.message?.includes("429") || error.message?.includes("rate limit")) {
+    if (
+      error.message?.includes("429") ||
+      error.message?.includes("rate limit") ||
+      error.message?.includes("Too Many Requests")
+    ) {
       return NextResponse.json(
         { error: "服务繁忙，请稍后再试（速率限制）" },
         { status: 429 }
+      );
+    }
+
+    if (error.name === "AbortError" || error.message?.includes("aborted")) {
+      return NextResponse.json(
+        { error: "AI 响应超时，请稍后重试" },
+        { status: 504 }
       );
     }
 
