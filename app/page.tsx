@@ -151,38 +151,47 @@ export default function HomePage() {
       throw new Error(err.error || "Failed to generate explanation");
     }
 
-    let fullText = "";
-
-    // 流式读取并同时更新 UI
     const reader = response.body?.getReader();
     if (!reader) throw new Error("No reader available");
-    
+
     const decoder = new TextDecoder();
+    let fullText = "";
+    const contentType = response.headers.get("content-type") || "";
     let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      
-      // 处理 buffer 中的行
+
+      const chunk = decoder.decode(value, { stream: true });
+
+      // 纯文本流：直接追加
+      if (!contentType.includes("text/event-stream")) {
+        fullText += chunk;
+        setStreamingText((prev) => prev + chunk);
+        continue;
+      }
+
+      // SSE 流：按 data 行解析
+      buffer += chunk;
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
-      
+
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed || !trimmed.startsWith("data: ")) continue;
-        
+
         const data = trimmed.slice(6);
-        
         if (data === "[DONE]") continue;
-        
+
         try {
           const parsed = JSON.parse(data);
           if (parsed.type === "text-delta" && parsed.textDelta) {
             fullText += parsed.textDelta;
             setStreamingText((prev) => prev + parsed.textDelta);
+          } else if (parsed.choices?.[0]?.delta?.content) {
+            fullText += parsed.choices[0].delta.content;
+            setStreamingText((prev) => prev + parsed.choices[0].delta.content);
           }
         } catch {
           if (data) {
@@ -193,7 +202,7 @@ export default function HomePage() {
       }
     }
 
-    return fullText;
+    return fullText.trim();
   };
 
   const handleStartAnalysis = async () => {

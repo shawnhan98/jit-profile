@@ -34,9 +34,7 @@ export async function POST(request: NextRequest) {
 3. 只返回JSON，不要其他文本`,
       });
 
-      return new Response((await result).toAIStream(), {
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
+      return result.toTextStreamResponse();
     }
 
     if (action === "explain") {
@@ -82,9 +80,7 @@ ${prompt}
         system: `你是一个因材施教的教学专家。根据用户对不同前置知识的掌握程度，动态调整你的讲解风格和深度。目标是让每个用户都能以最适合自己的方式理解内容。`,
       });
 
-      return new Response((await result).toAIStream(), {
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
+      return result.toTextStreamResponse();
     }
 
     return NextResponse.json(
