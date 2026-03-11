@@ -9,6 +9,10 @@ interface CustomizedExplanationProps {
   selectedLevels: Record<number, KnowledgeLevel>;
   streamingText: string;
   isLoading: boolean;
+  errorMessage?: string | null;
+  helperMessage?: string | null;
+  onRetry?: () => void;
+  onBack?: () => void;
   onComplete: () => void;
 }
 
@@ -18,6 +22,10 @@ export default function CustomizedExplanation({
   selectedLevels,
   streamingText,
   isLoading,
+  errorMessage,
+  helperMessage,
+  onRetry,
+  onBack,
   onComplete,
 }: CustomizedExplanationProps) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -68,8 +76,32 @@ export default function CustomizedExplanation({
         )}
       </div>
 
-      {!isLoading && streamingText && (
-        <div className="mt-6 flex justify-center">
+      {errorMessage ? (
+        <div className="mt-6 space-y-3">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
+            {errorMessage}
+          </div>
+          <div className="flex flex-wrap justify-center gap-3">
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="px-5 py-2 bg-blue-600 text-white rounded-full text-sm hover:bg-blue-700 transition-colors"
+              >
+                再试一次
+              </button>
+            )}
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="px-5 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-full text-sm hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+              >
+                返回重新选择
+              </button>
+            )}
+          </div>
+        </div>
+      ) : !isLoading && streamingText ? (
+        <div className="mt-6 flex justify-center gap-3">
           <button
             onClick={() => {
               window.scrollTo({ top: 0, behavior: "smooth" });
@@ -79,7 +111,11 @@ export default function CustomizedExplanation({
             ⬆️ 回到顶部
           </button>
         </div>
-      )}
+      ) : helperMessage ? (
+        <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          {helperMessage}
+        </div>
+      ) : null}
     </div>
   );
 }

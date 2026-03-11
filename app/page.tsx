@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import AnalysisInput from "@/components/AnalysisInput";
 import KnowledgeCheck from "@/components/KnowledgeCheck";
 import CustomizedExplanation from "@/components/CustomizedExplanation";
@@ -13,6 +13,57 @@ const DEFAULT_STATE: AnalysisState = {
   explanation: "",
   step: "input",
 };
+
+function parseApiErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+
+  const rawMessage = error.message || fallback;
+  const statusMatch = rawMessage.match(/API request failed:\s*(\d{3})\s*-/);
+  const status = statusMatch ? Number(statusMatch[1]) : undefined;
+  const jsonMatch = rawMessage.match(/\{[\s\S]*\}$/);
+
+  let serverMessage = "";
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      serverMessage = parsed.error || parsed.message || "";
+    } catch {
+      serverMessage = "";
+    }
+  }
+
+  const combined = `${rawMessage} ${serverMessage}`;
+
+  if (
+    status === 401 ||
+    combined.includes("401") ||
+    combined.includes("Unauthorized") ||
+    combined.includes("无效") ||
+    combined.includes("已过期")
+  ) {
+    return "当前服务端配置的智谱 API Key 无效或已过期，需要先更新后端配置。";
+  }
+
+  if (
+    status === 429 ||
+    combined.includes("429") ||
+    combined.includes("Too Many Requests") ||
+    combined.includes("速率限制")
+  ) {
+    return "智谱接口当前较忙，已触发限流。请稍等 10～30 秒后重试。";
+  }
+
+  if (
+    status === 504 ||
+    combined.includes("504") ||
+    combined.includes("超时") ||
+    combined.includes("timeout")
+  ) {
+    return "AI 响应有点慢，这次请求已超时。可以直接再试一次，通常下一次会恢复。";
+  }
+
+  return serverMessage || rawMessage || fallback;
+}
 
 // 解析 SSE 流，提取文本内容
 async function readSSEText(response: Response): Promise<string> {
@@ -81,6 +132,10 @@ export default function HomePage() {
   const [state, setState] = useState<AnalysisState>(DEFAULT_STATE);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [helperMessage, setHelperMessage] = useState<string | null>(
+    "高峰期可能遇到限流或超时，系统会尽快给出明确提示。"
+  );
   const explanationRef = useRef<HTMLDivElement>(null);
 
   // 调用后端 API - 提取知识点
@@ -208,6 +263,8 @@ export default function HomePage() {
   const handleStartAnalysis = async () => {
     if (!state.content.trim()) return;
 
+    setErrorMessage(null);
+    setHelperMessage("正在提取关键知识点，通常需要几秒钟。");
     setIsLoading(true);
     try {
       const knowledgePoints = await extractKnowledgePoints(state.content);
@@ -216,15 +273,56 @@ export default function HomePage() {
         knowledgePoints,
         step: knowledgePoints.length > 0 ? "check" : "explanation",
       }));
+      setHelperMessage(
+        knowledgePoints.length > 0
+          ? "请标记你对这些知识点的掌握程度，我会立刻生成定制化解析。"
+          : "这段内容不需要额外前置知识点，正在直接生成解析。"
+      );
     } catch (error) {
       console.error("Extraction failed:", error);
-      alert("分析失败，请重试");
+      setErrorMessage(
+        parseApiErrorMessage(error, "分析失败，请稍后重试。")
+      );
+      setHelperMessage("你可以直接点击“开始分析”再次尝试。");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startExplanation = async (
+    selectedLevels: Record<number, KnowledgeLevel>
+  ) => {
+    setErrorMessage(null);
+    setHelperMessage("正在生成个性化解析，若高峰期较慢会自动给出明确提示。");
+    setIsLoading(true);
+    setState((prev) => ({ ...prev, step: "explanation" }));
+    setStreamingText("");
+
+    try {
+      const fullText = await generateExplanation(
+        state.content,
+        state.knowledgePoints,
+        selectedLevels
+      );
+      setState((prev) => ({
+        ...prev,
+        explanation: fullText,
+        step: "complete",
+      }));
+      setHelperMessage(null);
+    } catch (error) {
+      console.error("Generation failed:", error);
+      setErrorMessage(
+        parseApiErrorMessage(error, "生成解析失败，请稍后重试。")
+      );
+      setHelperMessage("你可以直接重试一次，或返回调整知识点掌握程度。");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleLevelSelect = async (index: number, level: KnowledgeLevel) => {
+    setErrorMessage(null);
     setState((prev) => ({
       ...prev,
       selectedLevels: { ...prev.selectedLevels, [index]: level },
@@ -237,34 +335,19 @@ export default function HomePage() {
     const hasAnySkip = Object.values(updatedLevels).includes("skip");
 
     if (hasAllSelected || hasAnySkip) {
-      setIsLoading(true);
-      setState((prev) => ({ ...prev, step: "explanation" }));
-      setStreamingText("");
-
-      try {
-        const fullText = await generateExplanation(
-          state.content,
-          state.knowledgePoints,
-          updatedLevels
-        );
-        setIsLoading(false);
-        setState((prev) => ({
-          ...prev,
-          explanation: fullText,
-          step: "complete",
-        }));
-      } catch (error) {
-        console.error("Generation failed:", error);
-        alert("生成解析失败，请重试");
-        setState((prev) => ({ ...prev, step: "check" }));
-        setIsLoading(false);
-      }
+      await startExplanation(updatedLevels);
     }
+  };
+
+  const handleRetryExplanation = async () => {
+    await startExplanation(state.selectedLevels);
   };
 
   const handleReset = () => {
     setState(DEFAULT_STATE);
     setStreamingText("");
+    setErrorMessage(null);
+    setHelperMessage("高峰期可能遇到限流或超时，系统会尽快给出明确提示。");
     if (explanationRef.current) {
       explanationRef.current.scrollTop = 0;
     }
@@ -285,11 +368,15 @@ export default function HomePage() {
         {state.step === "input" && (
           <AnalysisInput
             content={state.content}
-            onContentChange={(content) =>
-              setState((prev) => ({ ...prev, content }))
-            }
+            onContentChange={(content) => {
+              setErrorMessage(null);
+              setHelperMessage("高峰期可能遇到限流或超时，系统会尽快给出明确提示。");
+              setState((prev) => ({ ...prev, content }));
+            }}
             onStart={handleStartAnalysis}
             isLoading={isLoading}
+            errorMessage={errorMessage}
+            helperMessage={!errorMessage ? helperMessage : null}
           />
         )}
 
@@ -309,6 +396,14 @@ export default function HomePage() {
             selectedLevels={state.selectedLevels}
             streamingText={streamingText}
             isLoading={isLoading}
+            errorMessage={errorMessage}
+            helperMessage={!errorMessage ? helperMessage : null}
+            onRetry={handleRetryExplanation}
+            onBack={() => {
+              setErrorMessage(null);
+              setHelperMessage("你可以调整知识点掌握程度后重新生成。")
+              setState((prev) => ({ ...prev, step: "check" }));
+            }}
             onComplete={() =>
               setState((prev) => ({ ...prev, step: "complete" }))
             }

@@ -2,11 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { createZhipuAI } from "@/lib/zhipu";
 import { streamText } from "ai";
 
+const EXTRACT_TIMEOUT_MS = 12000;
+const EXPLAIN_TIMEOUT_MS = 25000;
+
+function jsonError(error: string, status: number) {
+  return NextResponse.json({ error }, { status });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { action, content, knowledgePoints, selectedLevels } =
       await request.json();
 
+    if (!process.env.ZHIPU_API_KEY) {
+      return jsonError("服务端未配置智谱 API Key", 500);
+    }
+
+    if (!content || typeof content !== "string" || !content.trim()) {
+      return jsonError("请先输入需要分析的内容", 400);
+    }
+
+    const normalizedContent = content.trim().slice(0, 6000);
     const zhipu = createZhipuAI();
 
     if (action === "extract") {
@@ -14,10 +30,10 @@ export async function POST(request: NextRequest) {
       const result = await streamText({
         model: zhipu.chat("glm-4.7-flash"),
         temperature: 0.3,
-        maxTokens: 500,
+        maxTokens: 320,
         maxRetries: 0,
-        abortSignal: AbortSignal.timeout(15000),
-        prompt: `请分析以下内容，提取1-2个最重要的前置知识点或概念。内容：${content}`,
+        abortSignal: AbortSignal.timeout(EXTRACT_TIMEOUT_MS),
+        prompt: `请分析以下内容，提取 1-2 个最重要的前置知识点或概念。内容：${normalizedContent}`,
         system: `你是一个专业的学习分析助手。请从用户提供的内容中，识别出理解该内容所必需的最关键的1-2个前置知识点或概念。
 
 输出格式要求（严格JSON）：
@@ -40,6 +56,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "explain") {
+      if (!Array.isArray(knowledgePoints) || !selectedLevels) {
+        return jsonError("缺少知识点评估信息，请重新开始分析", 400);
+      }
+
       const levels = ["unknown", "familiar", "mastered", "skip"];
       const levelLabels = ["完全陌生", "大概听过", "了如指掌", "跳过"];
       const levelDescs = [
@@ -60,12 +80,12 @@ export async function POST(request: NextRequest) {
       const result = await streamText({
         model: zhipu.chat("glm-4.7-flash"),
         temperature: 0.5,
-        maxTokens: 1500,
+        maxTokens: 1100,
         maxRetries: 0,
-        abortSignal: AbortSignal.timeout(20000),
+        abortSignal: AbortSignal.timeout(EXPLAIN_TIMEOUT_MS),
         prompt: `请根据以下信息，为用户生成个性化的内容解析：
 
-原始内容：${content}
+原始内容：${normalizedContent}
 
 知识点评估：
 ${prompt}
@@ -87,12 +107,17 @@ ${prompt}
       return result.toTextStreamResponse();
     }
 
-    return NextResponse.json(
-      { error: "Invalid action" },
-      { status: 400 }
-    );
+    return jsonError("无效的操作类型", 400);
   } catch (error: any) {
     console.error("API error:", error);
+
+    if (
+      error.message?.includes("401") ||
+      error.message?.includes("Unauthorized") ||
+      error.message?.includes("验证不正确")
+    ) {
+      return jsonError("智谱 API Key 无效或已过期，请更新服务端配置", 401);
+    }
 
     // 检查是否是智谱速率限制错误
     if (
@@ -100,22 +125,13 @@ ${prompt}
       error.message?.includes("rate limit") ||
       error.message?.includes("Too Many Requests")
     ) {
-      return NextResponse.json(
-        { error: "服务繁忙，请稍后再试（速率限制）" },
-        { status: 429 }
-      );
+      return jsonError("服务繁忙，请稍后再试（速率限制）", 429);
     }
 
     if (error.name === "AbortError" || error.message?.includes("aborted")) {
-      return NextResponse.json(
-        { error: "AI 响应超时，请稍后重试" },
-        { status: 504 }
-      );
+      return jsonError("AI 响应超时，请稍后重试", 504);
     }
 
-    return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: 500 }
-    );
+    return jsonError(error.message || "Internal server error", 500);
   }
 }

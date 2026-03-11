@@ -5,6 +5,8 @@ interface AnalysisInputProps {
   onContentChange: (content: string) => void;
   onStart: () => void;
   isLoading: boolean;
+  errorMessage?: string | null;
+  helperMessage?: string | null;
 }
 
 export default function AnalysisInput({
@@ -12,6 +14,8 @@ export default function AnalysisInput({
   onContentChange,
   onStart,
   isLoading,
+  errorMessage,
+  helperMessage,
 }: AnalysisInputProps) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-6 animate-fade-in">
@@ -27,7 +31,7 @@ export default function AnalysisInput({
         disabled={isLoading}
       />
 
-      <div className="mt-4 flex items-center justify-between">
+      <div className="mt-4 flex items-center justify-between gap-4">
         <div className="text-sm text-slate-500 dark:text-slate-400">
           {content.length} 字符
         </div>
@@ -39,6 +43,16 @@ export default function AnalysisInput({
           {isLoading ? "分析中..." : "开始分析"}
         </button>
       </div>
+
+      {errorMessage ? (
+        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
+          {errorMessage}
+        </div>
+      ) : helperMessage ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          {helperMessage}
+        </div>
+      ) : null}
 
       <p className="mt-4 text-xs text-slate-400 dark:text-slate-500 text-center">
         AI 将自动提取关键知识点并为您定制学习路径
